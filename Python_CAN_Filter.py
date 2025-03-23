@@ -63,10 +63,40 @@ offset = 0
 
 import can
 
-def receive_can_messages():
 
-    filters = [{"can_id": 0x123, "can_mask": 0x7FF, "extended": False},]
-    bus = can.interface.Bus(channel='can0', bustype='socketcan', can_filters=filters)
+
+
+def CAN_DECODER(CAN_msg):
+    #following our instructions in the GitHub file, here is the framework
+    #for decoding the CAN message
+    
+    #pull the ID
+    ID = CAN_msg.arbitration_id
+    #data list to return
+    #1st element speed, 2nd rpm, 3rd battery level
+    data_array = []
+    
+    #decision tree with instructions based on ID  
+    if ID == 1303:
+        #we have the 'VCU_Inverter_Status_2' message, containing 
+        #inverter RPM
+        data_array[1] = int(CAN_msg.data[0]) #start bit 0     
+    elif ID == 1304:
+        #we have the 'VCU_Vehicle_Status_1' message
+        #we need both the wheelspeed & battery level
+        data_array[0] = int(CAN_msg.data[2]) #start bit 16
+        data_array[2] = int(CAN_msg.data[4]) #start bit 32    
+    else:
+        1
+        #do nothing
+    
+    return data_array
+
+
+
+
+def receive_can_messages():
+    bus = can.interface.Bus(channel='can0', bustype='socketcan')
 
     print("Starting to receive CAN messages...")
 
@@ -75,23 +105,20 @@ def receive_can_messages():
             message = bus.recv()  #Receives a CAN message
             if message is not None:
                 
-                #**********DATA MANIPULATION HERE*******
-                
-                #create msg object
-                #print(message.data) #print data array from message
-                #returns a bytre array
-                
-                object_1 = message.data[0] + 256*message.data[1]
+                #pull CAN values from decoder function
+                speed = CAN_DECODER(message)[0]
+                rpm = CAN_DECODER(message)[1]
+                batt_lvl = CAN_DECODER(message)[2]
                 
                 
-                print(object_1) #prints first data byte in message, converted to decimal
+                #This is technically still a test structure/format
+                #so during implementation we're going to need
+                #to do this in a single thread approach, and squeeze it into
+                #our TKinter UI event loop
+                #this means we may need to write a function which runs
+                #using our scheduling loop, or something of the sort
                 
                 
-                
-                
-                #***************************************
-                
-                #print(f"Received message: {message}")
     except KeyboardInterrupt:
         print("Program interrupted by user")
     finally:
