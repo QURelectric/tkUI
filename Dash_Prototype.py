@@ -15,13 +15,22 @@ SEE OTHER FILE FOR COMMENTS, ONLY COMMENTS ON THIS FILE ARE FOR THE CREATION
 
 import tkinter as tk
 import math
-import time
+import can
+import numpy as np
+
 
 class MovingDialApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Moving Dial Demo With Notches & Numbers")
+        
+        #CAN startup
+        try:
+            self.bus = can.interface.Bus(channel='can0', bustype='socketcan')
+        except can.CanError:
+            print("Error: Failed to initialize CAN interface")
 
+        
         self.offset = 75
         self.radius = 200
         self.canvas_width = 1600
@@ -33,10 +42,12 @@ class MovingDialApp:
 
         self.canvas = tk.Canvas(self.root, width=self.canvas_width, height=self.canvas_height)
         self.canvas.pack()
-
+        
+        """
         self.angle = 180
         self.speed = 2  
-
+        """
+        
         self.canvas.create_arc(self.center_x - self.radius, self.center_y - self.radius,
                                self.center_x + self.radius, self.center_y + self.radius,
                                start=0, extent=180, style=tk.PIESLICE, width=2, fill="lightblue")
@@ -74,6 +85,8 @@ class MovingDialApp:
         
         # Start blinking turn signals
         self.blink_signals()
+        
+        
 
 
         
@@ -131,14 +144,16 @@ class MovingDialApp:
 
         #simulate the battery level as a percentage (will need input from CAN/GPIO here)
         #variable for battery percentage
-        battPercent = 15
+        battPercent = 85
         self.update_battery_bar(battPercent, self.battery_bar)
         
         #label for the battery bar (FIX FONT)
         label = tk.Label(self.root, text=f"{label_text} ({battPercent}%)")
         label.place(x=x - 100, y=y - 25)
 
-    def update_battery_bar(self, percent, battery_bar):
+    def update_battery_bar(self, percent, battery_bar, message):
+        message = self.bus.recv()
+        percent = self.CAN_DECODER(message)[2]
         #update the width of the battery bar based on the percent
         bar_width = 400  #total width of the battery bar
         filled_width = bar_width * (percent / 100)  #calculate the filled portion of the bar
@@ -146,6 +161,9 @@ class MovingDialApp:
         self.canvas.coords(battery_bar, self.canvas.bbox(battery_bar)[0], self.canvas.bbox(battery_bar)[1],
                            self.canvas.bbox(battery_bar)[0] + filled_width, self.canvas.bbox(battery_bar)[3])
         self.canvas.itemconfig(battery_bar, fill="green" if percent > 20 else "red")  #color it based on the level
+        
+        #recursive call, smallest delay possible
+        self.root.after(1, self.update_battery_bar)
 
     def draw_notches(self, center_x, center_y, radius):
         num_notches = 10
@@ -170,24 +188,74 @@ class MovingDialApp:
             #write numbers to canvas
             self.canvas.create_text(number_x, number_y, text=str(i * 10), font=("Arial", 10, "bold"), fill="black")
 
+
+    def CAN_DECODER(self, CAN_msg):
+        #following our instructions in the GitHub file, here is the framework
+        #for decoding the CAN message
+        
+        #pull the ID
+        ID = CAN_msg.arbitration_id
+        #data list to return
+        #1st element speed, 2nd rpm, 3rd battery level
+        data_array = [None, None, None]
+        
+        #decision tree with instructions based on ID  
+        if ID == 1303:
+            #we have the 'VCU_Inverter_Status_2' message, containing 
+            #inverter RPM
+            data_array[1] = int(CAN_msg.data[0]) #start bit 0     
+        elif ID == 1304:
+            #we have the 'VCU_Vehicle_Status_1' message
+            #we need both the wheelspeed & battery level
+            data_array[0] = int(CAN_msg.data[2]) #start bit 16
+            data_array[2] = int(CAN_msg.data[4]) #start bit 32    
+        else:
+            1
+            #do nothing
+        
+        return data_array
+    
+    
     def update_dial(self):
-        angle_rad = math.radians(self.angle)
-        pointer_x = self.center_x + self.radius * math.cos(angle_rad)
-        pointer_y = self.center_y + self.radius * math.sin(angle_rad)
-
+        #CAN DECODING FUNCTIONALITY HERE, 
+        #Function declared above
+        message = self.bus.recv()
+        #pull CAN values from decoder function
+        speed = self.CAN_DECODER(message)[0]
+        rpm = self.CAN_DECODER(message)[1]
+        #shouldn't need self tag on the message object, as
+        #we've declared it as a local variable
+        
+        #Calculate angle for speed (assume 90 kmh max, may need to change this & numbering based on top speed)
+        speed_angle = speed/90 * np.pi #appropriate rads
+        
+        #Calculate angle for rpm (again, change range if needed)
+        rpm_angle = rpm/90 * np.pi
+        
+        #set x and y pointer coords for each dial based on angles
+        #speed
+        pointer_x = self.center_x + self.radius * math.cos(speed_angle)
+        pointer_y = self.center_y + self.radius * math.sin(speed_angle)
+        #rpms
+        pointer_x2 = self.center_x2 + self.radius * math.cos(rpm_angle)
+        pointer_y2 = self.center_y2 + self.radius * math.sin(rpm_angle)
+        
+        #draw dials in new position
         self.canvas.coords(self.pointer, self.center_x, self.center_y, pointer_x, pointer_y)
+        self.canvas.coords(self.pointer2, self.center_x2, self.center_y2, pointer_x2, pointer_y2)
+        
+        #recursive call, smallest delay possible
+        self.root.after(1, self.update_dial)
 
-        self.angle += self.speed
 
-        if self.angle >= 360:
-            #delay for debugging
-            time.sleep(1)
-            self.angle = 180
 
-        self.root.after(50, self.update_dial)
 
+#general startup
 root = tk.Tk()
 
+
+
 app = MovingDialApp(root)
+
 
 root.mainloop()
